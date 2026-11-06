@@ -1149,7 +1149,17 @@ input:focus,select:focus,textarea:focus{outline:none!important;border-color:#D4A
   window.manualSaleModule={
     items:[],
     _building:false,
-    init:()=>{
+init:async()=>{
+      if(!state.products||!state.products.length){
+        try{
+          utils.loading(true);
+          const snap=await getDocs(query(collection(db,'products'),where('active','==',true)));
+          state.products=snap.docs.map(d=>({id:d.id,...d.data()}));
+        }catch(e){
+          utils.toast('Erro ao carregar produtos','error');
+          utils.loading(false);return;
+        }finally{utils.loading(false);}
+      }
       manualSaleModule.items=[];manualSaleModule._building=false;
       ['ms-name','ms-whatsapp','ms-email','ms-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
       document.querySelectorAll('input[name="ms-payment"]').forEach(r=>r.checked=r.value==='avista');
@@ -1160,6 +1170,7 @@ input:focus,select:focus,textarea:focus{outline:none!important;border-color:#D4A
       const md=document.getElementById('ms-discount');if(md)md.value='0';
       manualSaleModule.renderItems();
     },
+
     addItem:()=>{manualSaleModule.items.push({productId:'',name:'',price:0,costPrice:0,quantity:1});manualSaleModule.renderItems();},
     removeItem:idx=>{manualSaleModule.items.splice(idx,1);manualSaleModule.renderItems();},
     renderItems:()=>{
