@@ -1146,222 +1146,312 @@ input:focus,select:focus,textarea:focus{outline:none!important;border-color:#D4A
   };
 
   /* ══ VENDA MANUAL ══ */
-  window.manualSaleModule={
-    items:[],
-    _building:false,
-init:async()=>{
-      if(!state.products||!state.products.length){
-        try{
-          utils.loading(true);
-          const snap=await getDocs(query(collection(db,'products'),where('active','==',true)));
-          state.products=snap.docs.map(d=>({id:d.id,...d.data()}));
-        }catch(e){
-          utils.toast('Erro ao carregar produtos','error');
-          utils.loading(false);return;
-        }finally{utils.loading(false);}
-      }
-      manualSaleModule.items=[];manualSaleModule._building=false;
-      ['ms-name','ms-whatsapp','ms-email','ms-note'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
-      document.querySelectorAll('input[name="ms-payment"]').forEach(r=>r.checked=r.value==='avista');
-      document.querySelectorAll('input[name="ms-delivery"]').forEach(r=>r.checked=r.value==='pickup');
-      manualSaleModule.togglePayment('avista');
-      manualSaleModule.toggleDelivery(false);
-      const mi=document.getElementById('ms-interest');if(mi)mi.value='0';
-      const md=document.getElementById('ms-discount');if(md)md.value='0';
-      manualSaleModule.renderItems();
-    },
+window.manualSaleModule={
+  items:[],
+  _building:false,
 
-    addItem:()=>{manualSaleModule.items.push({productId:'',name:'',price:0,costPrice:0,quantity:1});manualSaleModule.renderItems();},
-    removeItem:idx=>{manualSaleModule.items.splice(idx,1);manualSaleModule.renderItems();},
-    renderItems:()=>{
-      const wrap=document.getElementById('ms-items');
-      const prods=[...state.products].filter(p=>p.active!==false&&(p.stock??0)>0).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-      if(!manualSaleModule.items.length){
-        wrap.innerHTML=`<p class="text-center text-gray-400 text-sm py-3">Nenhum produto adicionado</p>`;
-        manualSaleModule.recalcTotal();return;
+  init:async()=>{
+    try{
+      utils.loading(true);
+      const snap=await getDocs(collection(db,'products'));
+      state.products=snap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.active!==false);
+    }catch(e){
+      console.error('Erro ao carregar produtos:',e);
+      utils.toast('Erro ao carregar produtos','error');
+      utils.loading(false);
+      return;
+    }finally{
+      utils.loading(false);
+    }
+    manualSaleModule.items=[];
+    manualSaleModule._building=false;
+    ['ms-name','ms-whatsapp','ms-email','ms-note'].forEach(id=>{
+      const e=document.getElementById(id);
+      if(e)e.value='';
+    });
+    document.querySelectorAll('input[name="ms-payment"]').forEach(r=>r.checked=r.value==='avista');
+    document.querySelectorAll('input[name="ms-delivery"]').forEach(r=>r.checked=r.value==='pickup');
+    manualSaleModule.togglePayment('avista');
+    manualSaleModule.toggleDelivery(false);
+    const mi=document.getElementById('ms-interest');if(mi)mi.value='0';
+    const md=document.getElementById('ms-discount');if(md)md.value='0';
+    // ✅ Já abre com uma linha de produto pronta
+    manualSaleModule.addItem();
+  },
+
+  addItem:()=>{
+    manualSaleModule.items.push({productId:'',name:'',price:0,costPrice:0,quantity:1});
+    manualSaleModule.renderItems();
+  },
+
+  removeItem:idx=>{
+    manualSaleModule.items.splice(idx,1);
+    manualSaleModule.renderItems();
+  },
+
+  renderItems:()=>{
+    const wrap=document.getElementById('ms-items');
+    if(!wrap)return;
+    // ✅ CORRIGIDO: sem filtro de stock aqui — transação valida estoque real
+    const prods=[...state.products]
+      .filter(p=>p.active!==false)
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+
+    if(!manualSaleModule.items.length){
+      wrap.innerHTML=`<p class="text-center text-gray-400 text-sm py-3">Nenhum produto adicionado</p>`;
+      manualSaleModule.recalcTotal();
+      return;
+    }
+    wrap.innerHTML=manualSaleModule.items.map((item,idx)=>{
+      const p=item.productId?state.products.find(x=>x.id===item.productId):null;
+      return`<div class="flex gap-2 items-start bg-gray-50 p-2 rounded-xl border border-gray-200">
+        <div class="flex-1 min-w-0">
+          <select onchange="manualSaleModule.selectProduct(${idx},this.value)" class="w-full admin-field" style="font-size:12px!important;padding:6px 8px;">
+            <option value="">Selecionar produto...</option>
+            ${prods.map(pr=>`<option value="${pr.id}" ${item.productId===pr.id?'selected':''}>${utils.sanitize(pr.name)} — ${utils.fmt(pr.price)}</option>`).join('')}
+          </select>
+          ${p?`<span style="font-size:10px;color:#16a34a;font-weight:700;display:block;margin-top:3px;margin-left:4px">Est: ${p.stock??0}</span>`:''}
+        </div>
+        <div class="flex items-center bg-white border-2 border-gray-200 rounded-xl overflow-hidden flex-shrink-0 mt-1">
+          <button onclick="manualSaleModule.changeQty(${idx},-1)" class="w-7 h-8 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100" style="background:none;border:none;cursor:pointer;">−</button>
+          <span class="px-2 font-bold text-sm min-w-[24px] text-center">${item.quantity}</span>
+          <button onclick="manualSaleModule.changeQty(${idx},+1)" class="w-7 h-8 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100" style="background:none;border:none;cursor:pointer;">+</button>
+        </div>
+        <span class="font-bold text-yellow-600 flex-shrink-0 mt-2" style="font-size:12px;min-width:60px">${utils.fmt(item.price*item.quantity)}</span>
+        <button onclick="manualSaleModule.removeItem(${idx})" class="text-red-400 hover:text-red-600 flex-shrink-0 mt-1" style="background:none;border:none;cursor:pointer;font-size:13px"><i class="fas fa-times"></i></button>
+      </div>`;
+    }).join('');
+    manualSaleModule.recalcTotal();
+  },
+
+  selectProduct:(idx,productId)=>{
+    const p=state.products.find(x=>x.id===productId);
+    manualSaleModule.items[idx]=p
+      ?{productId:p.id,name:p.name,price:p.onSale&&p.promoPrice?p.promoPrice:p.price,costPrice:p.costPrice||0,quantity:1}
+      :{productId:'',name:'',price:0,costPrice:0,quantity:1};
+    manualSaleModule.renderItems();
+  },
+
+  changeQty:(idx,delta)=>{
+    const item=manualSaleModule.items[idx];
+    if(!item)return;
+    const nq=item.quantity+delta;
+    if(nq<1)return;
+    // ✅ Verifica estoque local como aviso, mas transação valida o real
+    const p=state.products.find(x=>x.id===item.productId);
+    if(p&&nq>(p.stock??0))return utils.toast(`Estoque disponível: ${p.stock??0}`,'warn');
+    item.quantity=nq;
+    manualSaleModule.renderItems();
+  },
+
+  recalcTotal:()=>{
+    const subtotal=manualSaleModule.items.reduce((a,i)=>a+i.price*i.quantity,0);
+    const interest=parseFloat(document.getElementById('ms-interest')?.value)||0;
+    const discount=parseFloat(document.getElementById('ms-discount')?.value)||0;
+    const total=Math.max(0,subtotal+interest-discount);
+    const se=document.getElementById('ms-subtotal');if(se)se.innerText=utils.fmt(subtotal);
+    const te=document.getElementById('ms-total');if(te)te.innerText=utils.fmt(total);
+    return{subtotal,interest,discount,total};
+  },
+
+  recalcAndBuild:()=>{
+    manualSaleModule.recalcTotal();
+    const payType=document.querySelector('input[name="ms-payment"]:checked')?.value||'avista';
+    if(payType==='parcelado'||payType==='fiado')manualSaleModule.buildInstallments();
+  },
+
+  togglePayment:type=>{
+    ['avista','fiado','parcelado'].forEach(t=>{
+      const l=document.getElementById('ms-lbl-'+t);
+      if(l){
+        l.classList.toggle('border-yellow-400',t===type);
+        l.classList.toggle('border-transparent',t!==type);
       }
-      wrap.innerHTML=manualSaleModule.items.map((item,idx)=>{
-        const p=item.productId?state.products.find(x=>x.id===item.productId):null;
-        return`<div class="flex gap-2 items-start bg-gray-50 p-2 rounded-xl border border-gray-200">
-          <div class="flex-1 min-w-0">
-            <select onchange="manualSaleModule.selectProduct(${idx},this.value)" class="w-full admin-field" style="font-size:12px!important;padding:6px 8px;">
-              <option value="">Selecionar produto...</option>
-              ${prods.map(pr=>`<option value="${pr.id}" ${item.productId===pr.id?'selected':''}>${utils.sanitize(pr.name)} — ${utils.fmt(pr.price)}</option>`).join('')}
-            </select>
-            ${p?`<span style="font-size:10px;color:#16a34a;font-weight:700;display:block;margin-top:3px;margin-left:4px">Est: ${p.stock??0}</span>`:''}
+    });
+    const ff=document.getElementById('ms-fiado-fields');
+    const pw=document.getElementById('ms-parcelas-select-wrap');
+    const ew=document.getElementById('ms-extra-wrap');
+    if(type==='avista'){
+      ff?.classList.add('hidden');
+      if(ew)ew.classList.add('hidden');
+    }else if(type==='fiado'){
+      ff?.classList.remove('hidden');
+      if(pw)pw.classList.add('hidden');
+      if(ew)ew.classList.remove('hidden');
+      manualSaleModule.buildInstallments(1);
+    }else if(type==='parcelado'){
+      ff?.classList.remove('hidden');
+      if(pw)pw.classList.remove('hidden');
+      if(ew)ew.classList.remove('hidden');
+      manualSaleModule.buildInstallments();
+    }
+  },
+
+  buildInstallments:(forceN=null)=>{
+    if(manualSaleModule._building)return;
+    manualSaleModule._building=true;
+    try{
+      const n=forceN||(parseInt(document.querySelector('input[name="ms-parcelas"]:checked')?.value)||1);
+      const{total}=manualSaleModule.recalcTotal();
+      const wrap=document.getElementById('ms-parcelas-dates');
+      if(!wrap)return;
+      document.querySelectorAll('input[name="ms-parcelas"]').forEach(r=>{
+        const l=r.parentElement;
+        l.classList.toggle('border-blue-400',r.checked);
+        l.classList.toggle('border-blue-200',!r.checked);
+      });
+      const base=+(total/n).toFixed(2);
+      const today=new Date();
+      wrap.innerHTML=Array.from({length:n},(_,i)=>{
+        const d=new Date(today);
+        d.setMonth(d.getMonth()+i+1);
+        const ds=d.toISOString().slice(0,10);
+        const amt=i<n-1?base:+(total-base*(n-1)).toFixed(2);
+        return`<div class="flex items-center justify-between bg-white rounded-xl border border-blue-100 px-3 py-2">
+          <div>
+            <p class="font-bold text-blue-700" style="font-size:12px">Parcela ${i+1}</p>
+            <p class="text-blue-500 font-bold" style="font-size:14px">${utils.fmt(amt)}</p>
           </div>
-          <div class="flex items-center bg-white border-2 border-gray-200 rounded-xl overflow-hidden flex-shrink-0 mt-1">
-            <button onclick="manualSaleModule.changeQty(${idx},-1)" class="w-7 h-8 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100" style="background:none;border:none;cursor:pointer;">−</button>
-            <span class="px-2 font-bold text-sm min-w-[24px] text-center">${item.quantity}</span>
-            <button onclick="manualSaleModule.changeQty(${idx},+1)" class="w-7 h-8 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100" style="background:none;border:none;cursor:pointer;">+</button>
+          <div class="flex flex-col items-end gap-1">
+            <label class="text-xs text-gray-400 font-semibold">Vencimento</label>
+            <input type="date" id="ms-inst-date-${i}" value="${ds}" class="admin-field text-center font-bold text-blue-700" style="font-size:11px;padding:4px 8px;width:130px;">
+            <input type="hidden" id="ms-inst-amt-${i}" value="${amt.toFixed(2)}">
           </div>
-          <span class="font-bold text-yellow-600 flex-shrink-0 mt-2" style="font-size:12px;min-width:60px">${utils.fmt(item.price*item.quantity)}</span>
-          <button onclick="manualSaleModule.removeItem(${idx})" class="text-red-400 hover:text-red-600 flex-shrink-0 mt-1" style="background:none;border:none;cursor:pointer;font-size:13px"><i class="fas fa-times"></i></button>
         </div>`;
       }).join('');
-      manualSaleModule.recalcTotal();
-    },
-    selectProduct:(idx,productId)=>{
-      const p=state.products.find(x=>x.id===productId);
-      manualSaleModule.items[idx]=p?{productId:p.id,name:p.name,price:p.onSale&&p.promoPrice?p.promoPrice:p.price,costPrice:p.costPrice||0,quantity:1}:{productId:'',name:'',price:0,costPrice:0,quantity:1};
-      manualSaleModule.renderItems();
-    },
-    changeQty:(idx,delta)=>{
-      const item=manualSaleModule.items[idx];
-      const p=state.products.find(x=>x.id===item.productId);
-      const nq=item.quantity+delta;if(nq<1)return;
-      if(p&&nq>p.stock)return utils.toast('Estoque insuficiente','warn');
-      item.quantity=nq;manualSaleModule.renderItems();
-    },
-    // ✅ recalcTotal NÃO chama buildInstallments — retorna valores para quem precisar
-    recalcTotal:()=>{
-      const subtotal=manualSaleModule.items.reduce((a,i)=>a+i.price*i.quantity,0);
-      const interest=parseFloat(document.getElementById('ms-interest')?.value)||0;
-      const discount=parseFloat(document.getElementById('ms-discount')?.value)||0;
-      const total=Math.max(0,subtotal+interest-discount);
-      const se=document.getElementById('ms-subtotal');if(se)se.innerText=utils.fmt(subtotal);
-      const te=document.getElementById('ms-total');if(te)te.innerText=utils.fmt(total);
-      return{subtotal,interest,discount,total};
-    },
-    // ✅ recalcAndBuild: atualiza total E parcelas sem recursão
-    recalcAndBuild:()=>{
-      manualSaleModule.recalcTotal();
-      const payType=document.querySelector('input[name="ms-payment"]:checked')?.value||'avista';
-      if(payType==='parcelado'||payType==='fiado')manualSaleModule.buildInstallments();
-    },
-    togglePayment:type=>{
-      ['avista','fiado','parcelado'].forEach(t=>{
-        const l=document.getElementById('ms-lbl-'+t);
-        if(l){l.classList.toggle('border-yellow-400',t===type);l.classList.toggle('border-transparent',t!==type);}
-      });
-      const ff=document.getElementById('ms-fiado-fields');
-      const pw=document.getElementById('ms-parcelas-select-wrap');
-      const ew=document.getElementById('ms-extra-wrap');
-      if(type==='avista'){ff?.classList.add('hidden');if(ew)ew.classList.add('hidden');}
-      else if(type==='fiado'){ff?.classList.remove('hidden');if(pw)pw.classList.add('hidden');if(ew)ew.classList.remove('hidden');manualSaleModule.buildInstallments(1);}
-      else if(type==='parcelado'){ff?.classList.remove('hidden');if(pw)pw.classList.remove('hidden');if(ew)ew.classList.remove('hidden');manualSaleModule.buildInstallments();}
-    },
-    // ✅ buildInstallments usa flag _building para evitar recursão
-    buildInstallments:(forceN=null)=>{
-      if(manualSaleModule._building)return;
-      manualSaleModule._building=true;
-      try{
-        const n=forceN||(parseInt(document.querySelector('input[name="ms-parcelas"]:checked')?.value)||1);
-        const{total}=manualSaleModule.recalcTotal();
-        const wrap=document.getElementById('ms-parcelas-dates');if(!wrap)return;
-        document.querySelectorAll('input[name="ms-parcelas"]').forEach(r=>{
-          const l=r.parentElement;
-          l.classList.toggle('border-blue-400',r.checked);
-          l.classList.toggle('border-blue-200',!r.checked);
-        });
-        const base=+(total/n).toFixed(2);const today=new Date();
-        wrap.innerHTML=Array.from({length:n},(_,i)=>{
-          const d=new Date(today);d.setMonth(d.getMonth()+i+1);const ds=d.toISOString().slice(0,10);
-          const amt=i<n-1?base:+(total-base*(n-1)).toFixed(2);
-          return`<div class="flex items-center justify-between bg-white rounded-xl border border-blue-100 px-3 py-2">
-            <div><p class="font-bold text-blue-700" style="font-size:12px">Parcela ${i+1}</p><p class="text-blue-500 font-bold" style="font-size:14px">${utils.fmt(amt)}</p></div>
-            <div class="flex flex-col items-end gap-1"><label class="text-xs text-gray-400 font-semibold">Vencimento</label>
-              <input type="date" id="ms-inst-date-${i}" value="${ds}" class="admin-field text-center font-bold text-blue-700" style="font-size:11px;padding:4px 8px;width:130px;">
-              <input type="hidden" id="ms-inst-amt-${i}" value="${amt.toFixed(2)}">
-            </div>
-          </div>`;
-        }).join('');
-      }finally{manualSaleModule._building=false;}
-    },
-    toggleDelivery:show=>{
-      document.getElementById('ms-address-fields').classList.toggle('hidden',!show);
-      if(!show){['ms-street','ms-neighborhood','ms-city','ms-state'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});}
-    },
-    save:async()=>{
-      const name=document.getElementById('ms-name')?.value.trim();
-      const wa=(document.getElementById('ms-whatsapp')?.value||'').replace(/\D/g,'');
-      if(!name)return utils.toast('Digite o nome do cliente','error');
-      if(wa.length<10)return utils.toast('WhatsApp inválido','error');
-      const validItems=manualSaleModule.items.filter(i=>i.productId&&i.quantity>0);
-      if(!validItems.length)return utils.toast('Adicione pelo menos 1 produto','error');
-      // ✅ payType lido ANTES de abrir janela
-      const payType=document.querySelector('input[name="ms-payment"]:checked')?.value||'avista';
-      const delivType=document.querySelector('input[name="ms-delivery"]:checked')?.value||'pickup';
-      const{subtotal,interest,discount,total}=manualSaleModule.recalcTotal();
-      if(total<=0)return utils.toast('Valor final inválido','error');
-      let installments=[];
-      if(payType==='fiado'||payType==='parcelado'){
-        const n=payType==='fiado'?1:(parseInt(document.querySelector('input[name="ms-parcelas"]:checked')?.value)||1);
-        installments=Array.from({length:n},(_,i)=>({number:i+1,dueDate:document.getElementById(`ms-inst-date-${i}`)?.value||'',amount:parseFloat(document.getElementById(`ms-inst-amt-${i}`)?.value)||0,status:'pending',paidAt:null,paidAmount:0}));
-        if(installments.some(inst=>!inst.dueDate))return utils.toast('Preencha todas as datas de vencimento','error');
-      }
-
-      // ✅ Abre janela ANTES do await (gesto do usuário ainda ativo)
-      const waWin=window.open('','_blank');
-
-      utils.loading(true);
-      try{
-        const orderId=utils.genId();
-        const address=delivType==='delivery'?{street:document.getElementById('ms-street')?.value||'',neighborhood:document.getElementById('ms-neighborhood')?.value||'',city:document.getElementById('ms-city')?.value||'',state:document.getElementById('ms-state')?.value||''}:{};
-        // ✅ CORRIGIDO: payType (não paymentType) usado corretamente no objeto order
-        const order={
-          orderId,customerId:'manual',isManual:true,
-          customerName:name,customerWhatsapp:wa,
-          customerEmail:document.getElementById('ms-email')?.value||'',
-          products:validItems,subtotalProducts:subtotal,interestAmount:interest,
-          discountAmount:discount,subtotal,finalizedValue:total,
-          deliveryType:delivType,address,note:document.getElementById('ms-note')?.value||'',
-          paymentType:payType,installments,
-          totalDebt:payType==='fiado'||payType==='parcelado'?total:0,totalPaid:0,
-          status:payType==='avista'?'Pago':'Fiado',stockDeducted:true,
-          createdAt:new Date().toISOString()
-        };
-       await runTransaction(db,async t=>{
-  // ✅ FASE 1 — todos os reads
-  const pRefs=validItems.map(item=>doc(db,'products',item.productId));
-  const pSnaps=await Promise.all(pRefs.map(r=>t.get(r)));
-
-  // ✅ FASE 2 — validações (sem nenhum write)
-  for(let i=0;i<validItems.length;i++){
-    if(!pSnaps[i].exists())
-      throw new Error(`Produto "${validItems[i].name}" não encontrado`);
-    const stock=pSnaps[i].data().stock??0;
-    if(stock<validItems[i].quantity)
-      throw new Error(`Estoque insuficiente: "${validItems[i].name}" (disponível: ${stock})`);
-  }
-
-  // ✅ FASE 3 — todos os writes
-  for(let i=0;i<validItems.length;i++){
-    t.update(pRefs[i],{stock:increment(-validItems[i].quantity)});
-  }
-  const orderRef=doc(collection(db,'orders'));
-  t.set(orderRef,order);
-});
-
-
-        const payL={avista:'À Vista',fiado:'Fiado',parcelado:'Parcelado'};
-        let msg=`✅ *Venda Registrada*\n*ID:* ${orderId}\n*Cliente:* ${name}\n\n*Produtos:*\n`;
-        validItems.forEach(i=>{msg+=`• ${i.name} x${i.quantity} = ${utils.fmt(i.price*i.quantity)}\n`;});
-        msg+=`\n*Subtotal:* ${utils.fmt(subtotal)}`;
-        if(interest>0)msg+=`\n*Juros/Acréscimo:* ${utils.fmt(interest)}`;
-        if(discount>0)msg+=`\n*Desconto:* -${utils.fmt(discount)}`;
-        msg+=`\n*Total Final:* *${utils.fmt(total)}*\n*Pagamento:* ${payL[payType]||payType}`;
-        if(payType==='fiado'||payType==='parcelado'){
-          msg+=`\n\n*Parcelas:*\n`;
-          installments.forEach(inst=>{msg+=`• Parcela ${inst.number}: ${utils.fmt(inst.amount)} — Vence ${inst.dueDate?new Date(inst.dueDate+'T12:00:00').toLocaleDateString('pt-BR'):'-'}\n`;});
-        }
-        if(order.note)msg+=`\n*Obs:* ${order.note}`;
-        msg+=`\n\nObrigado pela preferência! 🙏`;
-
-        // ✅ Redireciona janela pré-aberta para WhatsApp
-        utils.sendWhatsApp(wa,msg,waWin);
-
-        utils.toast('Venda registrada! ✅');state._dashCache=null;
-        await productsModule.load();
-        manualSaleModule.init();
-        navigate('orders');
-      }catch(err){
-        // ✅ Fecha aba vazia se falhou
-        if(waWin&&!waWin.closed)waWin.close();
-        utils.toast(err.message||'Erro ao registrar venda','error');
-      }finally{utils.loading(false);}
+    }finally{
+      manualSaleModule._building=false;
     }
-  };
+  },
+
+  toggleDelivery:show=>{
+    document.getElementById('ms-address-fields')?.classList.toggle('hidden',!show);
+    if(!show){
+      ['ms-street','ms-neighborhood','ms-city','ms-state'].forEach(id=>{
+        const e=document.getElementById(id);if(e)e.value='';
+      });
+    }
+  },
+
+  save:async()=>{
+    const name=(document.getElementById('ms-name')?.value||'').trim();
+    const wa=(document.getElementById('ms-whatsapp')?.value||'').replace(/\D/g,'');
+    if(!name)return utils.toast('Digite o nome do cliente','error');
+    if(wa.length<10)return utils.toast('WhatsApp inválido','error');
+
+    // ✅ CORRIGIDO: cópia profunda dos itens antes de qualquer await
+    const validItems=manualSaleModule.items
+      .filter(i=>i.productId&&i.quantity>0)
+      .map(i=>({...i})); // ← cópia para não ser afetado por renderItems()
+
+    if(!validItems.length)return utils.toast('Adicione pelo menos 1 produto','error');
+
+    const payType=document.querySelector('input[name="ms-payment"]:checked')?.value||'avista';
+    const delivType=document.querySelector('input[name="ms-delivery"]:checked')?.value||'pickup';
+    const{subtotal,interest,discount,total}=manualSaleModule.recalcTotal();
+    if(total<=0)return utils.toast('Valor final inválido','error');
+
+    let installments=[];
+    if(payType==='fiado'||payType==='parcelado'){
+      const n=payType==='fiado'?1:(parseInt(document.querySelector('input[name="ms-parcelas"]:checked')?.value)||1);
+      installments=Array.from({length:n},(_,i)=>({
+        number:i+1,
+        dueDate:document.getElementById(`ms-inst-date-${i}`)?.value||'',
+        amount:parseFloat(document.getElementById(`ms-inst-amt-${i}`)?.value)||0,
+        status:'pending',paidAt:null,paidAmount:0
+      }));
+      if(installments.some(inst=>!inst.dueDate))
+        return utils.toast('Preencha todas as datas de vencimento','error');
+    }
+
+    // ✅ Abre janela ANTES do await (gesto do usuário ainda ativo)
+    const waWin=window.open('','_blank');
+
+    utils.loading(true);
+    try{
+      const orderId=utils.genId();
+      const address=delivType==='delivery'?{
+        street:document.getElementById('ms-street')?.value||'',
+        neighborhood:document.getElementById('ms-neighborhood')?.value||'',
+        city:document.getElementById('ms-city')?.value||'',
+        state:document.getElementById('ms-state')?.value||''
+      }:{};
+
+      const order={
+        orderId,customerId:'manual',isManual:true,
+        customerName:name,customerWhatsapp:wa,
+        customerEmail:document.getElementById('ms-email')?.value||'',
+        products:validItems,
+        subtotalProducts:subtotal,interestAmount:interest,discountAmount:discount,
+        subtotal,finalizedValue:total,
+        deliveryType:delivType,address,
+        note:document.getElementById('ms-note')?.value||'',
+        paymentType:payType,installments,
+        totalDebt:payType==='fiado'||payType==='parcelado'?total:0,
+        totalPaid:0,
+        status:payType==='avista'?'Pago':'Fiado',
+        stockDeducted:true,
+        createdAt:new Date().toISOString()
+      };
+
+      await runTransaction(db,async t=>{
+        // ✅ FASE 1 — todos os reads
+        const pRefs=validItems.map(item=>doc(db,'products',item.productId));
+        const pSnaps=await Promise.all(pRefs.map(r=>t.get(r)));
+
+        // ✅ FASE 2 — todas as validações (zero writes aqui)
+        for(let i=0;i<validItems.length;i++){
+          if(!pSnaps[i].exists())
+            throw new Error(`Produto "${validItems[i].name}" não encontrado`);
+          const stock=pSnaps[i].data().stock??0;
+          if(stock<validItems[i].quantity)
+            throw new Error(`Estoque insuficiente: "${validItems[i].name}" (disponível: ${stock})`);
+        }
+
+        // ✅ FASE 3 — todos os writes
+        for(let i=0;i<validItems.length;i++){
+          t.update(pRefs[i],{stock:increment(-validItems[i].quantity)});
+        }
+        const orderRef=doc(collection(db,'orders'));
+        t.set(orderRef,order);
+      });
+
+      const payL={avista:'À Vista',fiado:'Fiado',parcelado:'Parcelado'};
+      let msg=`✅ *Venda Registrada*\n*ID:* ${orderId}\n*Cliente:* ${name}\n\n*Produtos:*\n`;
+      validItems.forEach(i=>{msg+=`• ${i.name} x${i.quantity} = ${utils.fmt(i.price*i.quantity)}\n`;});
+      msg+=`\n*Subtotal:* ${utils.fmt(subtotal)}`;
+      if(interest>0)msg+=`\n*Juros/Acréscimo:* ${utils.fmt(interest)}`;
+      if(discount>0)msg+=`\n*Desconto:* -${utils.fmt(discount)}`;
+      msg+=`\n*Total Final:* *${utils.fmt(total)}*\n*Pagamento:* ${payL[payType]||payType}`;
+      if(payType==='fiado'||payType==='parcelado'){
+        msg+=`\n\n*Parcelas:*\n`;
+        installments.forEach(inst=>{
+          msg+=`• Parcela ${inst.number}: ${utils.fmt(inst.amount)} — Vence ${inst.dueDate?new Date(inst.dueDate+'T12:00:00').toLocaleDateString('pt-BR'):'-'}\n`;
+        });
+      }
+      if(order.note)msg+=`\n*Obs:* ${order.note}`;
+      msg+=`\n\nObrigado pela preferência! 🙏`;
+
+      // ✅ Redireciona janela pré-aberta para WhatsApp
+      utils.sendWhatsApp(wa,msg,waWin);
+
+      utils.toast('Venda registrada! ✅');
+      state._dashCache=null;
+      await productsModule.load();
+      manualSaleModule.init();
+      navigate('orders');
+
+    }catch(err){
+      // ✅ Fecha aba vazia se falhou
+      if(waWin&&!waWin.closed)waWin.close();
+      console.error('Erro ao registrar venda:',err);
+      utils.toast(err.message||'Erro ao registrar venda','error');
+    }finally{
+      utils.loading(false);
+    }
+  }
+};
+
 
   /* ══ CONVERT TO FIADO ══ */
   window.convertToFiado={
