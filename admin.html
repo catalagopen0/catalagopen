@@ -1311,18 +1311,28 @@ init:async()=>{
           status:payType==='avista'?'Pago':'Fiado',stockDeducted:true,
           createdAt:new Date().toISOString()
         };
-        await runTransaction(db,async t=>{
-          for(const item of validItems){
-            const pRef=doc(db,'products',item.productId);
-            const pSnap=await t.get(pRef);
-            if(!pSnap.exists())throw new Error(`Produto "${item.name}" não encontrado`);
-            const currentStock=pSnap.data().stock??0;
-            if(currentStock<item.quantity)throw new Error(`Estoque insuficiente para "${item.name}" (disponível: ${currentStock})`);
-            t.update(pRef,{stock:increment(-item.quantity)});
-          }
-          const ref=doc(collection(db,'orders'));
-          t.set(ref,order);
-        });
+       await runTransaction(db,async t=>{
+  // ✅ FASE 1 — todos os reads
+  const pRefs=validItems.map(item=>doc(db,'products',item.productId));
+  const pSnaps=await Promise.all(pRefs.map(r=>t.get(r)));
+
+  // ✅ FASE 2 — validações (sem nenhum write)
+  for(let i=0;i<validItems.length;i++){
+    if(!pSnaps[i].exists())
+      throw new Error(`Produto "${validItems[i].name}" não encontrado`);
+    const stock=pSnaps[i].data().stock??0;
+    if(stock<validItems[i].quantity)
+      throw new Error(`Estoque insuficiente: "${validItems[i].name}" (disponível: ${stock})`);
+  }
+
+  // ✅ FASE 3 — todos os writes
+  for(let i=0;i<validItems.length;i++){
+    t.update(pRefs[i],{stock:increment(-validItems[i].quantity)});
+  }
+  const orderRef=doc(collection(db,'orders'));
+  t.set(orderRef,order);
+});
+
 
         const payL={avista:'À Vista',fiado:'Fiado',parcelado:'Parcelado'};
         let msg=`✅ *Venda Registrada*\n*ID:* ${orderId}\n*Cliente:* ${name}\n\n*Produtos:*\n`;
